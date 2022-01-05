@@ -12,8 +12,12 @@ import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import redis.clients.jedis.Jedis;
 
-public class Test {
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+public class Test02 {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());
 
@@ -31,48 +35,44 @@ public class Test {
             }
         });
 
-        //按id keyBy
-        KeyedStream<WaterSensor, String> keyedStream = waterSensorDStream.keyBy(new KeySelector<WaterSensor, String>() {
-            @Override
-            public String getKey(WaterSensor value) throws Exception {
-                return value.getId();
-            }
-        });
+        //获取当前时间
+        long ts = System.currentTimeMillis();
 
-        SingleOutputStreamOperator<TestSensor> testWaterSensorWithIncreaseIdDStream = keyedStream.map(new RichMapFunction<WaterSensor, TestSensor>() {
-            //定义状态
-            ValueState<Integer> valueState;
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
 
+        String date = sdf.format(new Date(ts));
+
+        SingleOutputStreamOperator<TestSensor> testWaterSensorWithIncreaseIdDStream = waterSensorDStream.map(new RichMapFunction<WaterSensor, TestSensor>() {
+
+            //定义jedis连接
+            Jedis jedis;
 
             @Override
             public void open(Configuration parameters) throws Exception {
-                //初始化状态
-                valueState = getRuntimeContext().getState(new ValueStateDescriptor<Integer>("valueState", Integer.class));
+                //创建redis连接
+                jedis = new Jedis("localhost", 6379);
+
             }
 
             @Override
             public TestSensor map(WaterSensor waterSensor) throws Exception {
 
+                //redisKey
+                String redisKey = date + "_" + waterSensor.getId();
 
+                //查询redis,获取自增id
+                String increaseId = jedis.get(redisKey);
 
-                //判断状态的值是否为null，为null说明该条数据第一次进入计算，自增id设为1
-                if (valueState.value() == null) {
-                    //更新状态，状态值设为1
-                    valueState.update(1);
+                if (increaseId == null) {
+
+                    increaseId = 1 + "";
 
                 } else {
-                    //状态的值自增
-
-                    Integer increaseId = valueState.value();
-
-                    increaseId += 1;
-
-                    valueState.update(increaseId);
-
+                    increaseId = (Integer.parseInt(increaseId) + 1) + "";
                 }
 
-                //获取状态的值
-                Integer increaseId = valueState.value();
+                //更新redis
+                jedis.set(redisKey, increaseId);
 
                 //创建新的JavaBean，保存自增id
                 TestSensor testSensor = new TestSensor();
@@ -83,13 +83,12 @@ public class Test {
                 testSensor.setVc(waterSensor.getVc());
 
                 //自增id
-                testSensor.setIncreaseId(increaseId);
+                testSensor.setIncreaseId(Integer.parseInt(increaseId));
 
                 return testSensor;
-
-
             }
         });
+
 
         testWaterSensorWithIncreaseIdDStream.print();
 
