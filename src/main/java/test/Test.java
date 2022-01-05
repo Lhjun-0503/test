@@ -94,5 +94,7 @@ public class Test {
         testWaterSensorWithIncreaseIdDStream.print();
 
         env.execute();
+        
+        //--------------------------------------test----------------------------
     }
 }
